@@ -1,0 +1,359 @@
+---
+title: "IMPRS-gBGC – PhD position applicant for Autumn 2022"
+author: "Artur Lourenço"
+date: '2022-10-2'
+output:
+  html_document: default
+  pdf_document: default
+subtitle: Work Sample
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# gc(TRUE) 
+# rm(list = ls()) 
+# # dev.off() 
+# cat("\014") 
+# Sys.setlocale(locale = "Portuguese")
+
+```
+
+```{r packages, include=FALSE}
+
+list.of.packages <-
+  c(
+    "colorRamps",
+    "ggplot2",
+    "zoo",
+    "RColorBrewer",
+    "ggrepel",
+    "sf",
+    "rgeos",
+    "ggforce",
+    "scales",
+    "lubridate",
+    "tidyverse",
+    "rayshader",
+    "timeDate",
+    "corrplot",
+    "bigleaf",
+    "patchwork",
+    "leaflet",
+    "ggpmisc",
+    "gridExtra",
+    "cowplot"
+  ) # packages list
+
+new.packages <-
+  list.of.packages[!(list.of.packages %in% installed.packages()[, "Package"])] # checar se h? algum pacote novo
+
+if (length(new.packages))
+  install.packages(new.packages) # installs new packages if required
+
+lapply(list.of.packages, library, character.only = TRUE) # loading packages
+
+setwd("G:/My Drive/Phd/MPI/MPI 2022/work_sample/work_sample_imprs_2022") # set work directory
+
+ECtowerData<- read_csv("IMPRS_1_ECtowerData.csv")
+
+```
+
+```{r imprs, echo = FALSE}
+knitr::include_graphics("imprs_visual.png")
+```
+
+## 1 Introduction
+
+This is a work sample produced with the aim of demonstrating the skills and knowledge needed to work on the project "Reveal carbon dynamics of a Mediterranean savanna ecosystem by utilizing long-term observational data". 
+
+## 2 Data 
+
+It was provided a long-term dataset collected by the three flux towers from the experimental site 'Majadas del Tietar' in 2018 and 2019. The fieldwork project component is based on this site. The variables present in the dataset are:
+
+**Measured fluxes**: H, LE and co2_flux; 
+
+**Calculated storage** fluxes for CO2 and H2O, CO2 concentration; 
+
+**Gap-filled fluxes:** H_f, LE_f, NEE_uStar_f, GPP_uStar_f and Reco_uStar_f;
+
+**Biometeorological variables:** Ta02, Ta15, rh02, rh15, Wspd, Wdir, Rain, SWDR, SWUR, Albedo, LWDR, LWUR, Trad, PARd, PARu, NetRad, SWCn, G and Tsoil.
+
+## 3 Study Site
+
+The study site is a mixed tree-grass 'dehesa' semi-arid ecosystem in Spain. The area has a low density tree cover. The semiarid climate in this region is characterized by cold winters and long dry summers, with periodic severe droughts [1]. The location of the study site and flux towers is shown on the interactive map below.
+
+```{r map, echo=FALSE}
+
+MajadasStation<- data.frame(lat=c(39.934583,39.942692, 39.940337), long=c(-5.775889,-5.778656,-5.774675), name= c("Tower South","Tower North","Tower East")) # from http://www.europe-fluxdata.eu/home/site-details?id=ES-LM2
+
+leaflet(data = MajadasStation) %>%
+  addTiles() %>%
+  addProviderTiles(providers$Esri.WorldImagery) %>%
+  addMarkers(~long, ~lat, popup = ~as.character(name), label = ~as.character(name),group = "Majadas del Tietar Flux Towers") %>% 
+  addLayersControl(
+    overlayGroups = c("Majadas del Tietar Flux Towers"),
+    options = layersControlOptions(collapsed = FALSE)
+  ) %>% 
+  addMiniMap() %>% 
+  setView(-5.778126, 39.940683, zoom = 16)
+
+```
+
+## 4 Knowledge base
+
+For a better understanding of the mechanisms, processes and variables measured in the ecosystem, the key publications related to the MANIP project, in which the study area is present, were read. The main authors were T.S. El-Madany et al. 2018, 2020 and 2021, and Y. Lou et al. 2019.
+
+Publications accessed at:
+
+https://www.bgc-jena.mpg.de/bgi/index.php/Research/ManipProject
+
+## 5 Data pre-processing
+
+It was performed the pre-processing and exploration of the dataset to understand its structure and contents.
+
+```{r nacount, echo=FALSE}
+
+na_count <-  ECtowerData %>%
+  summarise(across(everything(), ~ sum(is.na(.))))  
+  # pivot_longer(!rDate, names_to = "variable", values_to = "value")
+
+knitr::kable(
+  list(
+    na_count
+  ),
+  caption = 'Number of NA values in the variables', booktabs = TRUE
+)
+
+```
+
+The NA values of `H`, `LE` and `co2_flux` variables are equivalent to 14.8%, 21.4% and 24% of the total, respectively.
+
+It was identified that between the dates of 2018-07-15 and 2019-07-02, there are recurrent failures in the monitoring of the 19 biometeorological variables. This was probably due to technical problems in the measuring equipment.
+
+```{r nacount_biomet, echo=FALSE}
+
+na_count_biomet <- head(ECtowerData[which(is.na(ECtowerData$Wspd)),13:31])
+
+knitr::kable(
+  list(
+    na_count_biomet
+  ),
+  caption = 'Period of failure in the measurements of biometeorological variables', booktabs = TRUE
+)
+
+```
+
+Are there any missing dates in the time series?
+
+```{r dates_miss, echo=TRUE}
+
+length(ECtowerData$rDate) != length(seq(as.POSIXct(first(ECtowerData$rDate)), as.POSIXct(last(ECtowerData$rDate)), by=30*60))
+
+```
+
+<div class="alert alert-warning">
+  <strong>Note!</strong> The variable Albedo presented 58% of NA values. However, this high number of NA values can be a result of how the variable is measured, unit of measurement and how it is stored computationally.
+</div>
+
+## 6 Half-hourly Carbon fluxes Behavior
+
+Graphs were produced to visualize the behavior of the gap-filled carbon fluxes variables on the half-hourly scale.
+
+```{r half_hourly, fig.width=9, fig.height=10, echo=FALSE, warning=FALSE}
+
+ECtowerData_longer <-  ECtowerData %>%
+  select(c(rDate, GPP_uStar_f, NEE_uStar_f, Reco_uStar)) %>% 
+  # mutate_at(c("GPP_uStar_f", "NEE_uStar_f", "Reco_uStar"), cumsum) %>%
+  pivot_longer(!rDate, names_to = "variable", values_to = "value")
+
+fill_labels <- setNames(c("NEE", "GPP", "Reco"),
+                        c("NEE_uStar_f", "GPP_uStar_f", "Reco_uStar"))
+
+ggplot(ECtowerData_longer, aes(x = rDate, y = value, group = variable, col = variable)) +
+  geom_line() +
+  labs(
+    title = "Carbon Fluxes Variation at Half-hourly Scale",
+    subtitle = "Series 2018-2019 from the experimental site Majadas del Tietar",
+    y = "",
+    x = "Half-hourly",
+    caption = "Data Source: MPI/BGI-EcoMet."
+  ) +  # title and caption
+  scale_color_discrete(name = 'Variables', labels = fill_labels) +
+  theme_bw() + 
+  facet_wrap(~ variable, scales = "free_y",ncol = 1,  strip.position = "left", 
+             labeller = as_labeller(c(NEE_uStar_f = "(umol CO2 m-2 s-1)", GPP_uStar_f = " ", Reco_uStar = " ") ) )  +
+  ylab(NULL) +
+  theme(strip.background = element_blank(), strip.placement = "outside")
+
+```
+
+The variables analyzed did not show consistent behavior over the two years of the time series studied, showing high seasonal variation, but not interannual variation.
+
+## 7 Monthly Carbon fluxes Behavior
+
+In order to convert the data to a monthly scale, it was first necessary to convert it to a daily scale. For this, functions from the `bigleaf` package were used to perform the conversion to gC m−2 d−1. After that, the data were aggregated to a monthly scale and then the annual totals were obtained.
+
+```{r monthly, fig.width=9, fig.height=10,echo=FALSE}
+
+co2_to_monthly <-  ECtowerData %>%
+  select(c(rDate, GPP_uStar_f, NEE_uStar_f, Reco_uStar)) %>% 
+  group_by(rDate = as.Date(format(rDate, "%Y-%m-%d"))) %>% # group by the day
+  summarise_at(c("GPP_uStar_f", "NEE_uStar_f", "Reco_uStar"), mean, na.rm = TRUE) %>%
+  mutate_at(c("GPP_uStar_f", "NEE_uStar_f", "Reco_uStar"), umolCO2.to.gC) %>% 
+  group_by(rDate = format(rDate, "%Y-%m")) %>%
+  summarise_at(c("GPP_uStar_f", "NEE_uStar_f", "Reco_uStar"),sum, na.rm = TRUE) %>% 
+  mutate(rDate = as.Date(timeLastDayInMonth(paste(rDate,'01',sep = "-"))))
+
+co2_to_annual <- co2_to_monthly %>% 
+  group_by(rDate = format(rDate, "%Y")) %>%
+  summarise_at(c("GPP_uStar_f", "NEE_uStar_f", "Reco_uStar"),sum, na.rm = TRUE) %>%   t() %>% 
+  as.data.frame()
+
+co2_to_annual<- co2_to_annual[-1,]
+co2_to_annual<- cbind(Var=c("GPP", "NEE", "Reco"),co2_to_annual)
+colnames(co2_to_annual)<- c("Var","2018", "2019")
+rownames(co2_to_annual)<- c("GPP", "NEE", "Reco")
+
+m_abb<- data.frame(m=1:12,abb=month.abb)
+
+co2_to_monthly_long <- co2_to_monthly %>% 
+    pivot_longer(!rDate, names_to = "variable", values_to = "value")
+
+p1<- ggplot(co2_to_monthly_long,
+       aes(x = as.factor(rDate), y = value, fill = variable)) +
+  geom_bar(stat="identity") + 
+  labs(
+    title = "Carbon Fluxes Variation at Monthly Scale",
+    subtitle = "Series 2018-2019 from the experimental site Majadas del Tietar",
+    y = "",
+    x = "Monthly",
+    caption = "Data Source: MPI/BGI-EcoMet."
+  ) +  # title and caption
+  scale_color_discrete(name = 'Variables', labels = fill_labels) +
+  scale_x_discrete(labels = rep(m_abb$abb,2)) +
+  theme_bw() + 
+  facet_wrap(~ variable, scales = "free_y",ncol = 1,  strip.position = "left", 
+             labeller = as_labeller(c(NEE_uStar_f = "(gC m-2 )", GPP_uStar_f = " ", Reco_uStar = " ") ) )  +
+  ylab(NULL) +
+  theme(strip.background = element_blank(), strip.placement = "outside") 
+
+ggdraw(p1) + draw_grob(tableGrob(co2_to_annual, rows=NULL), x=.78, y=0.25, width=0.2, height=0.2)
+
+```
+
+The figure above shows the behavior of the GPP, NEE and Reco variables on the monthly scale. It is possible to notice more clearly the seasonal dynamics of the GPP. 
+
+## 8 Carbon fluxes Drivers
+
+To carry out the analysis of possible drivers of carbon fluxes in the system, a correlation matrix was calculated between the GPP and some chosen biometeorological variables.
+
+```{r corr_plot, fig.width=6, fig.height=6, echo=FALSE}
+
+cor_data<- ECtowerData %>%
+  select(GPP_uStar_f,NetRad,rh02,rh15, SWDR, Rain, PARd, SWUR, G, PARu, Trad) %>%
+  replace(is.na(.), 0) %>%  
+  cor() 
+
+corrplot(
+  cor_data,
+  method = "color",
+  type = "lower",
+  order = "hclust",
+  addCoef.col = "black",
+  tl.col = "black",
+  tl.srt = 45,
+  sig.level = 0.05,
+  insig = "pch",
+  addrect = 3,
+  diag = FALSE )    
+
+```
+
+In the correlation matrix presented above, the GPP showed a significant correlation with some biometeorological variables analyzed. Among them, SWUR, SWDR, PARd, PARu, NetRad and G can be highlighted, which present positive r values above 0.5.
+
+It is important to highlight the correlation with the measured variables directly linked to the soil, such as heat flux and soil moisture content. This may mean that the ecosystem's GPP may be more strongly related to the grassland herbaceous layer.
+
+The half-hourly mean, max and min values for GPP and SWDR variables of the entire serie was calculated to check their behavior throughout the day.
+
+```{r half_hourly_mean, fig.width=9, fig.height=10, echo=FALSE}
+
+HHly_mean <-  ECtowerData %>%
+  select(rDate,GPP_uStar_f,SWDR) %>% 
+  group_by(rDate = format(rDate, "%H:%M")) %>%  # group by the day
+  summarise(across(everything(), .f = list(mean = mean, max = max, min = min), na.rm = TRUE)) %>%
+  pivot_longer(!rDate, names_to = "variable", values_to = "value") %>% 
+  mutate(group = if_else(str_match(variable,"GPP_uStar_f") == "GPP_uStar_f","GPP_uStar_f","SWDR",missing = "SWDR"))
+
+ggplot(HHly_mean, aes(x = rDate, y = value, group = group, col = variable)) +
+  geom_point() +
+  labs(
+    title = "Half-hourly Mean, Max and Min Variation of GPP and SWDR",
+    subtitle = "Series 2018-2019",
+    y = "GPP (umol CO2 m-2 s-1)",
+    x = "Half-hourly",
+    caption = "Data Source: MPI/BGI-EcoMet."
+  ) +  # title and caption
+  scale_x_discrete(breaks = unique(HHly_mean$rDate)[seq(1,48,4)]) +
+  scale_color_discrete(name = 'Variables') +
+  theme_bw() + 
+  facet_wrap(~ group,scales = "free_y",ncol = 1,  strip.position = "left", 
+             labeller = as_labeller(c(Rain = "SWDR (?)", GPP_uStar_f = "GPP (umol CO2 m-2 s-1)") ) )  +
+  ylab(NULL) +
+  theme(strip.background = element_blank(), strip.placement = "outside")
+
+
+```
+
+GPP and SWDR showed similar behaviors but with slightly different peak hours. 
+
+A simple linear regression was performed to specifically verify the dependence relationship between the GPP and the SWDR variable.
+
+```{r linear_reg, echo=FALSE, warning=FALSE}
+
+l1<- ggplot(data = ECtowerData %>% filter(rDate >= "2019-05-08 00:00:00" & rDate <= "2019-05-08 23:30:00")
+       , aes(x = SWDR, y = GPP_uStar_f)) +
+  geom_point() +
+  geom_smooth(method = "lm", se=FALSE, color="black", formula = y ~ x) +
+  stat_poly_eq(formula = y ~ x, 
+               aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~")), 
+               parse = TRUE) +
+  labs(
+    title = "Day in the Rainy Season",
+    # subtitle = "",
+    y = "GPP (mmol H2O m-2 s-1)",
+    x = "SWDR (?)",
+    caption = "Data Source: MPI/BGI-EcoMet."
+  ) +
+  theme_bw() 
+
+l2<- ggplot(data = ECtowerData %>% filter(rDate >= "2019-03-12 00:00:00" & rDate <= "2019-03-12 23:30:00")
+       , aes(x = SWDR, y = GPP_uStar_f)) +
+  geom_point() +
+  geom_smooth(method = "lm", se=FALSE, color="black", formula = y ~ x) +
+  stat_poly_eq(formula = y ~ x, 
+               aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~")), 
+               parse = TRUE) +
+  labs(
+    title = "Day in the Dry Season",
+    # subtitle = "",
+    y = "GPP (mmol H2O m-2 s-1)",
+    x = "SWDR (?)",
+    caption = "Data Source: MPI/BGI-EcoMet."
+  ) +
+  theme_bw() 
+
+l1 + l2 + plot_layout(nrow = 1)
+
+```
+
+Linear regression showed high correlation between the GPP and SWDR both on days in the wet and dry season. More robust techniques can be applied to understand the contributions of the various variables involved in the study of carbon drivers in the ecosystem. El-Madany et al. (2020), applied the Relative Importance (RI), calculating the contributions of each individual predictor variable to the total coefficient of determination (R²).
+
+## References
+
+[1] El-Madany, T. S., Reichstein, M., Carrara, A., Martín, M. P., Moreno, G., Gonzalez-Cascon, R., et al. (2021). How nitrogen and phosphorus availability change water use efficiency in a Mediterranean savanna ecosystem. Journal of Geophysical Research: Biogeosciences, 126, e2020JG006005. doi.org/10.1029/2020JG006005
+
+[2] El-Madany T.S., Carrara, A., Martín, M. P., Moreno, G., Kolle, O., Pacheco-Labrador, J., Weber, U., Wutzler, T., Reichstein, M., Migliavacca, M. (2020). Drought and heatwave impacts on semi-arid ecosystems' carbon fluxes along a precipitation gradient. Philosophical Transactions of the Royal Society of London, Series B: Biological Sciences, 375(1810): 20190519. doi:10.1098/rstb.2019.0519.
+
+[3] Yunpeng Luo, El-Madany T.S., Ma, X., Nair, R. K. F., Jung, M., Weber, U., Filippa, G., Bucher, S. F., Moreno, G., Cremonese, E., Carrara, A., Gonzalez-Cascon, R., Escudero, Y. C., Galvagno, M., Pacheco-Labrador, J., Martín, M. P., Perez-Priego, O., Reichstein, M., Richardson, A. D., Menzel, A., Römermann, C., Migliavacca, M. (2020). Nutrients and water availability constrain the seasonality of vegetation activity in a Mediterranean ecosystem. Global Change Biology, 26(8), 4379-4400. doi:10.1111/gcb.15138.
+
+[4] El-Madany T.S., Reichstein, M., Oscar Perez-Priego, Arnaud Carrara, Gerardo Moreno, M. Pilar Martín, Javier Pacheco-Labrador, Georg Wohlfahrt, Hector Nieto, Ulrich Weber, Olaf Kolle, Yun-Peng Luo, Nuno Carvalhais, Migliavacca, M. (2018). Drivers of spatio-temporal variability of carbon dioxide and energy fluxes in a Mediterranean savanna ecosystem, Agricultural and Forest Meteorology, Volume 262, Pages 258-278. doi.org/10.1016/j.agrformet.2018.07.010
